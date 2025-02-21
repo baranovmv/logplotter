@@ -1,10 +1,10 @@
+use std::collections::LinkedList;
 use clap::{Parser, ValueHint};
 use std::fs::File;
 use std::fs::metadata;
 use std::io::{Seek, SeekFrom};
 use std::ops::{Add, AddAssign};
-use std::os::linux::raw::stat;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::thread::sleep;
 use std::time;
@@ -18,14 +18,14 @@ use yaml_rust2::{YamlLoader, Yaml};
 // use tower_http::services::ServeDir;
 use tokio;
 use warp::Filter;
-
+use tokio::sync::mpsc;
 
 mod utils;
 mod logrecord;
 
 use utils::line_reader::*;
 use utils::Once;
-use crate::logrecord::LogRecordType;
+use crate::logrecord::*;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -45,7 +45,8 @@ async fn main() -> Result<()> {
     if !args.log_file.is_file() {
         return Err(anyhow!("{} is not a file", args.log_file.display()))
     }
-    let mut recordstypes = load_config(&args.config_file)?;
+    let recordstypes = Arc::new(load_config(&args.config_file)?);
+    let parser = LogParser::new(recordstypes.clone());
 
     let ctrlc = Arc::new(AtomicBool::new(false));
     let ctrlc_for_signal = ctrlc.clone();
@@ -54,7 +55,8 @@ async fn main() -> Result<()> {
     })
     .expect("Error setting Ctrl-C handler");
 
-    tokio::spawn(serve_http());
+    let parsed_data_store = Arc::new(Mutex::<LogFields>::new());
+    tokio::spawn(serve_http(parsed_data_store.clone(), recordstypes));
 
     let mut log_file = File::open(&args.log_file)?;
     let mut last_size = log_file.seek(SeekFrom::End(0))?;
@@ -85,9 +87,9 @@ async fn main() -> Result<()> {
             }
             continue;
         }
-        for records in recordstypes.iter_mut() {
-            parsed_line_count.add_assign(u16::try_from(records.parse(&lines))?);
-        }
+        let (parse_result, cur_parsed_line) = parser.parse(&lines);
+        parsed_line_count.add_assign(u16::try_from(cur_parsed_line)?);
+
 
         line_count.add_assign(u16::try_from(lines.len())?);
         if print_timer.once() {
@@ -104,11 +106,12 @@ async fn main() -> Result<()> {
     }
 
     println!("Finish");
+    drop(parser);
     Ok(())
 }
 
 
-fn load_config(file_path: &std::path::PathBuf) -> anyhow::Result<Vec<LogRecordType>> {
+fn load_config(file_path: &std::path::PathBuf) -> anyhow::Result<LogRecordsConfig> {
     if !file_path.is_file() {
         return Err(anyhow!("{} is not a file", file_path.display()))
     }
@@ -117,14 +120,15 @@ fn load_config(file_path: &std::path::PathBuf) -> anyhow::Result<Vec<LogRecordTy
     let docs = YamlLoader::load_from_str(&content)
         .or_else(|e| Err(anyhow!("Error parsing YAML file: {}", e.info())))?;
 
-    let mut recordstypes = Vec::<LogRecordType>::new();
+    let mut recordstypes = LogRecordsConfig::new();
     for doc in docs {
         if let Some(hash) = doc.as_hash() {
             for (name, record_settings) in hash.iter() {
                 let Some(name_s) = name.as_str() else { continue };
                 let Some(regex) = record_settings["regex"].as_str() else { continue };
-                recordstypes.push(LogRecordType::new(regex)?);
-                parse_plots(&record_settings["plots"], recordstypes.last_mut().unwrap());
+                let mut record_type = LogRecordType::new(name_s, regex)?;
+                parse_plots(&record_settings["plots"], &mut record_type);
+                recordstypes.insert(name_s.to_string(), record_type);
             }
         }
     }
@@ -141,10 +145,18 @@ fn parse_plots(plots_yml: &Yaml, conf: &mut LogRecordType) {
     }
 }
 
-async fn serve_http(channel_rx: ) {
+async fn serve_http(result_list: Arc<Mutex<LogFields<'_>>>, conf: Arc<LogRecordsConfig>) {
 
     // GET /hello/from/warp
-    let status = warp::path!("hello" / "from" / "warp").map(|| "Hello from warp!");
+    let status = warp::path!("hello").map(
+        move || {
+            let rl = result_list.lock();
+            if rl.unwrap().is_empty() {
+                "{}"
+            } else {
+                "{[666]}"
+            }
+        });
 
     let route = warp::get()
         .and(warp::fs::dir("static/").
