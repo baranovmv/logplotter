@@ -1,24 +1,20 @@
-use std::collections::LinkedList;
-use clap::{Parser, ValueHint};
+use std::collections::HashMap;
 use std::fs::File;
 use std::fs::metadata;
 use std::io::{Seek, SeekFrom};
+use std::net::SocketAddr;
 use std::ops::{Add, AddAssign};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::AtomicBool;
-use std::thread::sleep;
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 use std::time;
+use clap::{Parser, ValueHint};
 use ctrlc;
 use std::time::{Duration, SystemTime};
 use anyhow::{anyhow, Result};
 use yaml_rust2::{YamlLoader, Yaml};
-// use axum::{routing::get_service, Router};
-// use hyper::server;
-// use std::{net::SocketAddr, path::PathBuf};
-// use tower_http::services::ServeDir;
+use axum::{extract::State, routing::get, Json, Router};
+use hyper::Server;
+use tower_http::services::ServeDir;
 use tokio;
-use warp::Filter;
-use tokio::sync::mpsc;
 
 mod utils;
 mod logrecord;
@@ -55,8 +51,21 @@ async fn main() -> Result<()> {
     })
     .expect("Error setting Ctrl-C handler");
 
-    let parsed_data_store = Arc::new(Mutex::<LogFields>::new());
-    tokio::spawn(serve_http(parsed_data_store.clone(), recordstypes));
+    let parsed_data_store = Arc::new(Mutex::<LogFields>::new(LogFields::new()));
+    let state = AppState {
+        result_list: parsed_data_store.clone(),
+        conf: recordstypes
+    };
+    tokio::spawn(async move {
+        // Create the router
+        let app = Router::new()
+            .route("/update/", get(get_update))
+            .fallback_service(ServeDir::new("static/"))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+    });
+     // tokio::spawn(serve_http(parsed_data_store.clone(), recordstypes));
 
     let mut log_file = File::open(&args.log_file)?;
     let mut last_size = log_file.seek(SeekFrom::End(0))?;
@@ -144,26 +153,48 @@ fn parse_plots(plots_yml: &Yaml, conf: &mut LogRecordType) {
         conf.add_field(&name_s, axis, style);
     }
 }
+//
+// async fn serve_http(result_list: Arc<Mutex<LogFields<'_>>>, conf: Arc<LogRecordsConfig>) {
+//
+//     // GET /hello/from/warp
+//     let status = warp::path!("hello").map(
+//         move || {
+//             let rl = result_list.lock();
+//             if rl.unwrap().is_empty() {
+//                 "{}"
+//             } else {
+//                 "{[666]}"
+//             }
+//         });
+//
+//     let route = warp::get()
+//         .and(warp::fs::dir("static/").
+//             or(status)
+//         );
+//
+//     warp::serve(route)
+//         .run(([127, 0, 0, 1], 3030))
+//         .await;
+// }
 
-async fn serve_http(result_list: Arc<Mutex<LogFields<'_>>>, conf: Arc<LogRecordsConfig>) {
+#[derive(Clone)]
+struct AppState<'a> {
+    result_list: Arc<Mutex<LogFields<'a>>>,
+    conf: Arc<LogRecordsConfig>
+}
 
-    // GET /hello/from/warp
-    let status = warp::path!("hello").map(
-        move || {
-            let rl = result_list.lock();
-            if rl.unwrap().is_empty() {
-                "{}"
+// Handler for `/update/`
+async fn get_update(State(state): State<AppState<'_>>) -> Json<HashMap<String, Vec<FieldSample>>> {
+    let list = state.result_list.lock().unwrap();
+    let mut overall = HashMap::<String, Vec<FieldSample>>::new();
+    for parsed_block in &*list {
+        for (k, v) in parsed_block.get_map().iter() {
+            if let Some(ref mut dest_v) = overall.get_mut(*k) {
+                dest_v.extend(v);
             } else {
-                "{[666]}"
+                overall.insert((*k).clone(), v.clone());
             }
-        });
-
-    let route = warp::get()
-        .and(warp::fs::dir("static/").
-            or(status)
-        );
-
-    warp::serve(route)
-        .run(([127, 0, 0, 1], 3030))
-        .await;
+        }
+    }
+    Json(overall)
 }

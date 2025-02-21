@@ -101,7 +101,7 @@ impl LogParser {
     }
 }
 
-struct ParsedBlock<'a> {
+pub struct ParsedBlock<'a> {
     data: HashMap<&'a String, Vec<FieldSample>>,
     ts: Option<f64>,
 }
@@ -128,25 +128,25 @@ impl<'a> ParsedBlock<'a> {
     }
 }
 
-pub trait Append {
-    fn append_result(&mut self, result: ParsedBlock, max_duration: Option<f64>);
-}
-
-impl Append for LogFields<'_> {
-    fn append_result(&mut self, result: ParsedBlock, max_duration: Option<f64>) {
-        let new_ts = result.get_ts();
-        if max_duration.is_some() && new_ts.is_some() {
-            while !self.is_empty() {
-                let oldest = self.back().unwrap();
-                let Some(mut oldest_ts) = oldest.get_ts() else { break; };
-                let ts_delta = (new_ts.unwrap() - oldest_ts).abs();
-                if ts_delta > max_duration.unwrap() {
-                    self.pop_back();
-                } else {
-                    break;
-                }
-            }
-        }
-        self.push_front(result);
-    }
-}
+// pub trait Append {
+//     fn append_result(&mut self, result: ParsedBlock, max_duration: Option<f64>);
+// }
+//
+// impl Append for LogFields<'_> {
+//     fn append_result(&mut self, result: ParsedBlock, max_duration: Option<f64>) {
+//         let new_ts = result.get_ts();
+//         if max_duration.is_some() && new_ts.is_some() {
+//             while !self.is_empty() {
+//                 let oldest = self.back().unwrap();
+//                 let Some(mut oldest_ts) = oldest.get_ts() else { break; };
+//                 let ts_delta = (new_ts.unwrap() - oldest_ts).abs();
+//                 if ts_delta > max_duration.unwrap() {
+//                     self.pop_back();
+//                 } else {
+//                     break;
+//                 }
+//             }
+//         }
+//         self.push_front(result);
+//     }
+// }
