@@ -7,7 +7,7 @@ use std::collections::LinkedList;
 pub type LogRecordsConfig = HashMap<String, LogRecordType>;
 pub type FieldSample = (f64, f64);
 // pub type ParsedBlock<'a> = HashMap<&'a String, Vec<FieldSample>>;
-pub type LogFields<'a> = LinkedList<ParsedBlock<'a>>;
+pub type LogFields = LinkedList<ParsedBlock>;
 
 pub struct LogRecordType {
     name: String,
@@ -25,7 +25,7 @@ impl LogRecordType {
     }
 
     pub fn add_field(&mut self, legend: &str, axis: Option<u8>, style: Option<&str>) {
-        let field_name = self.name.clone() + legend;
+        let field_name = legend.to_string();
         self.fields.insert(legend.to_string().clone(), LogRecordField::new(field_name, axis, style));
     }
 }
@@ -63,7 +63,7 @@ impl LogParser {
         for rec in self.records_conf.values() {
             for field in rec.fields.values() {
                 let field_name = &field.name;
-                result.get_map_mut().insert(field_name, Vec::<FieldSample>::new());
+                result.get_map_mut().insert(field_name.clone(), Vec::<FieldSample>::new());
             }
         }
 
@@ -101,13 +101,13 @@ impl LogParser {
     }
 }
 
-pub struct ParsedBlock<'a> {
-    data: HashMap<&'a String, Vec<FieldSample>>,
+pub struct ParsedBlock {
+    data: HashMap<String, Vec<FieldSample>>,
     ts: Option<f64>,
 }
 
-impl<'a> ParsedBlock<'a> {
-    pub fn new() -> ParsedBlock<'a> {
+impl ParsedBlock {
+    pub fn new() -> ParsedBlock {
         ParsedBlock {data: HashMap::new(), ts: None}
     }
 
@@ -119,11 +119,11 @@ impl<'a> ParsedBlock<'a> {
         self.ts
     }
 
-    pub fn get_map_mut(&mut self) -> &mut HashMap<&'a String, Vec<FieldSample>> {
+    pub fn get_map_mut(&mut self) -> &mut HashMap<String, Vec<FieldSample>> {
         &mut self.data
     }
 
-    pub fn get_map(&self) -> &HashMap<&'a String, Vec<FieldSample>> {
+    pub fn get_map(&self) -> &HashMap<String, Vec<FieldSample>> {
         &self.data
     }
 }

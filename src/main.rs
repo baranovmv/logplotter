@@ -11,9 +11,12 @@ use ctrlc;
 use std::time::{Duration, SystemTime};
 use anyhow::{anyhow, Result};
 use yaml_rust2::{YamlLoader, Yaml};
-use axum::{extract::State, routing::get, Json, Router};
-use hyper::Server;
-use tower_http::services::ServeDir;
+use poem::{
+    handler,
+    listener::{Listener, TcpListener},
+    endpoint::StaticFilesEndpoint,
+    Route, Server,
+};
 use tokio;
 
 mod utils;
@@ -57,14 +60,15 @@ async fn main() -> Result<()> {
         conf: recordstypes
     };
     tokio::spawn(async move {
-        // Create the router
-        let app = Router::new()
-            .route("/update/", get(get_update))
-            .fallback_service(ServeDir::new("static/"))
-            .with_state(state);
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+        let app = Route::new().nest(
+        "/",
+            StaticFilesEndpoint::new("./static/").show_files_listing(),
+        );
+        Server::new(TcpListener::bind("0.0.0.0:3000"))
+            .run(app)
+            .await.unwrap()
     });
+
      // tokio::spawn(serve_http(parsed_data_store.clone(), recordstypes));
 
     let mut log_file = File::open(&args.log_file)?;
@@ -178,23 +182,7 @@ fn parse_plots(plots_yml: &Yaml, conf: &mut LogRecordType) {
 // }
 
 #[derive(Clone)]
-struct AppState<'a> {
-    result_list: Arc<Mutex<LogFields<'a>>>,
+struct AppState {
+    result_list: Arc<Mutex<LogFields>>,
     conf: Arc<LogRecordsConfig>
-}
-
-// Handler for `/update/`
-async fn get_update(State(state): State<AppState<'_>>) -> Json<HashMap<String, Vec<FieldSample>>> {
-    let list = state.result_list.lock().unwrap();
-    let mut overall = HashMap::<String, Vec<FieldSample>>::new();
-    for parsed_block in &*list {
-        for (k, v) in parsed_block.get_map().iter() {
-            if let Some(ref mut dest_v) = overall.get_mut(*k) {
-                dest_v.extend(v);
-            } else {
-                overall.insert((*k).clone(), v.clone());
-            }
-        }
-    }
-    Json(overall)
 }
