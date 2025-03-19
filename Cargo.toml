@@ -11,3 +11,6 @@ yaml-rust2 = "0.10.0"
 regex = "1.11.1"
 tokio = { version = "1", features = ["full"] }
 poem = { version = "3.1.7", features = ["static-files"] }
+serde = { version = "1.0.218", features = ["derive"] }
+rand = { version = "0", features = ["small_rng"] }
+

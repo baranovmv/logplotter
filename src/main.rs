@@ -12,11 +12,17 @@ use std::time::{Duration, SystemTime};
 use anyhow::{anyhow, Result};
 use yaml_rust2::{YamlLoader, Yaml};
 use poem::{
+    get,
     handler,
     listener::{Listener, TcpListener},
     endpoint::StaticFilesEndpoint,
     Route, Server,
+    middleware::Cors,
+    web::Json,
+    EndpointExt
 };
+use rand::{SeedableRng, rngs::SmallRng, RngCore};
+use serde::Serialize;
 use tokio;
 
 mod utils;
@@ -62,8 +68,12 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         let app = Route::new().nest(
         "/",
-            StaticFilesEndpoint::new("./static/").show_files_listing(),
+            StaticFilesEndpoint::new("./static/").index_file("index.html"),
         );
+        let app = Route::new()
+            .at("/data", get(get_data))
+            .nest("/", StaticFilesEndpoint::new("static").index_file("index.html"))
+            .with(Cors::new());
         Server::new(TcpListener::bind("0.0.0.0:3000"))
             .run(app)
             .await.unwrap()
@@ -185,4 +195,18 @@ fn parse_plots(plots_yml: &Yaml, conf: &mut LogRecordType) {
 struct AppState {
     result_list: Arc<Mutex<LogFields>>,
     conf: Arc<LogRecordsConfig>
+}
+
+
+#[derive(Serialize)]
+struct Data {
+    values: Vec<u8>,
+}
+
+#[handler]
+async fn get_data() -> Json<Data> {
+    let mut rng = SmallRng::seed_from_u64(5711);
+    let mut values = vec![0u8; 100];
+    rng.fill_bytes(values.as_mut_slice());
+    Json(Data { values })
 }

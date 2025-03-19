@@ -1,10 +1,53 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>LogPlotter</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Real-Time Plotly Chart</title>
+    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
 </head>
 <body>
-<h1>HW!</h1>
+    <h1 align="center">LogPlotter</h1>
+    <div id="chart" style="width: 80%; margin: auto; height: 400px;"></div>
+
+    <script>
+        // Initial empty data for the plot
+        const trace = {
+            x: [],
+            y: [],
+            mode: 'lines+markers',
+            line: { color: 'blue' },
+            marker: { size: 6 }
+        };
+
+        const layout = {
+            title: 'Real-Time Data Plot',
+            xaxis: { title: 'Time' },
+            yaxis: { title: 'Value', range: [0, 100] }
+        };
+
+        Plotly.newPlot('chart', [trace], layout);
+
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:3000/data');
+                const result = await response.json();
+
+                if (Array.isArray(result.values)) {
+                    const now = new Date().toLocaleTimeString();
+                    Plotly.extendTraces('chart', {
+                        x: [[now]],
+                        y: [result.values] // Adjust to plot specific values
+                    }, [0]);
+
+                }
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        // Fetch data every second
+        setInterval(fetchData, 200);
+    </script>
 </body>
 </html>
