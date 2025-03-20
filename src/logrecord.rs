@@ -2,12 +2,10 @@ use std::collections::HashMap;
 use regex;
 use std::sync::Arc;
 use std::collections::LinkedList;
-
+use serde::Serialize;
 
 pub type LogRecordsConfig = HashMap<String, LogRecordType>;
 pub type FieldSample = (f64, f64);
-// pub type ParsedBlock<'a> = HashMap<&'a String, Vec<FieldSample>>;
-pub type LogFields = LinkedList<ParsedBlock>;
 
 pub struct LogRecordType {
     name: String,
@@ -20,7 +18,7 @@ impl LogRecordType {
         Ok(LogRecordType {
             name: name.to_string().clone(),
             regex: regex::Regex::new(regex)?,
-            fields: HashMap::new()
+            fields: HashMap::new(),
         })
     }
 
@@ -49,14 +47,16 @@ impl LogRecordField {
 
 pub struct LogParser {
     records_conf: Arc<LogRecordsConfig>,
+    results_counter: usize,
+    ts_init: Option<f64>,
 }
 
 impl LogParser {
     pub fn new(record_type: Arc<LogRecordsConfig>) -> LogParser {
-        LogParser { records_conf: record_type }
+        LogParser { records_conf: record_type, results_counter: 0, ts_init: None }
     }
 
-    pub fn parse(&self, lines: &Vec<String>) -> (ParsedBlock, usize) {
+    pub fn parse(&mut self, lines: &Vec<String>) -> (ParsedBlock, usize) {
         let mut count = 0;
         let mut result = ParsedBlock::new();
         let mut res_ts = Option::<f64>::None;
@@ -73,6 +73,7 @@ impl LogParser {
                 if let Some(cap) = rec.regex.captures(&l) {
                     count += 1;
                     let ts: Option<f64> = cap["ts"].parse().ok();
+                    if self.ts_init.is_none() { self.ts_init = ts; }
                     for (field_name, field) in rec.fields.iter() {
                         let field_name = &field.name;
                         let Some(ref mut vec)
@@ -80,7 +81,8 @@ impl LogParser {
 
                         if field_name.as_str() != "ts" {
                             let Ok(val) = cap[field_name.as_str()].parse() else { continue };
-                            let ts_to_push = ts.unwrap_or(0f64);
+                            let ts_to_push = (ts.unwrap_or(0f64)
+                                                   - self.ts_init.unwrap_or(0f64)) * 1e-9;
                             if ts.is_some() {
                                 if res_ts.is_some() {
                                     res_ts = Some(res_ts.unwrap().max(ts_to_push));
@@ -96,26 +98,30 @@ impl LogParser {
         }
         if res_ts.is_some() {
             result.set_ts(res_ts.unwrap());
+        } else {
+            result.set_ts(self.results_counter as f64);
         }
+        self.results_counter += 1;
         (result, count)
     }
 }
 
+#[derive(Serialize, Clone)]
 pub struct ParsedBlock {
     data: HashMap<String, Vec<FieldSample>>,
-    ts: Option<f64>,
+    ts: f64
 }
 
 impl ParsedBlock {
     pub fn new() -> ParsedBlock {
-        ParsedBlock {data: HashMap::new(), ts: None}
+        ParsedBlock {data: HashMap::new(), ts: 0f64}
     }
 
     pub fn set_ts(&mut self, ts: f64) {
-        self.ts = Some(ts);
+        self.ts = ts;
     }
 
-    pub fn get_ts(&self) -> Option<f64> {
+    pub fn get_ts(&self) -> f64 {
         self.ts
     }
 

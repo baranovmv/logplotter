@@ -11,43 +11,152 @@
     <div id="chart" style="width: 80%; margin: auto; height: 400px;"></div>
 
     <script>
-        // Initial empty data for the plot
-        const trace = {
-            x: [],
-            y: [],
-            mode: 'lines+markers',
-            line: { color: 'blue' },
-            marker: { size: 6 }
-        };
+        // Store trace information
+        const tracesInfo = {};
+        let isInitialized = false;
 
+        // Track the maximum timestamp for relative time display
+        let maxTimestamp = 0;
+
+        // Initial layout with fixed x-axis range
         const layout = {
             title: 'Real-Time Data Plot',
-            xaxis: { title: 'Time' },
-            yaxis: { title: 'Value', range: [0, 100] }
+            xaxis: {
+                title: 'Time (relative seconds)',
+                range: [0, 60],  // Show last 60 seconds by default
+                autorange: false
+            },
+            yaxis: { title: 'Value' }
         };
 
-        Plotly.newPlot('chart', [trace], layout);
+        // Initialize with empty plot
+        Plotly.newPlot('chart', [], layout);
+
+        const clientId = `client_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Function to convert absolute timestamps to relative (seconds from latest)
+        function getRelativeTime(timestamps, latestTime) {
+            // Convert nanoseconds to seconds and make relative to latest
+            return timestamps.map(t => (t - latestTime) / 1e9);
+        }
+        max_ts = 60;
 
         async function fetchData() {
             try {
-                const response = await fetch('http://localhost:3000/data');
+                const response = await fetch(`http://localhost:3000/data?client_id=${clientId}`);
                 const result = await response.json();
 
-                if (Array.isArray(result.values)) {
-                    const now = new Date().toLocaleTimeString();
-                    Plotly.extendTraces('chart', {
-                        x: [[now]],
-                        y: [result.values] // Adjust to plot specific values
-                    }, [0]);
+                if (result.length === 0) return;
 
+                // Group all new data by trace
+                const newDataByTrace = {};
+                let localMaxTimestamp = maxTimestamp;
+
+                // First pass - find the maximum timestamp in this batch
+                result.forEach(parsed_block => {
+                    for (const [trace_name, trace_vals] of Object.entries(parsed_block.data)) {
+                        const xValues = trace_vals.map(pair => pair[0]);
+                        const batchMax = Math.max(...xValues);
+                        localMaxTimestamp = Math.max(localMaxTimestamp, batchMax);
+                    }
+                });
+
+                // Second pass - prepare data with relative timestamps
+                result.forEach(parsed_block => {
+                    for (const [trace_name, trace_vals] of Object.entries(parsed_block.data)) {
+                        if (!newDataByTrace[trace_name]) {
+                            newDataByTrace[trace_name] = { x: [], y: [] };
+                        }
+
+                        // Extract x and y values from pairs
+                        const x = trace_vals.map(pair => pair[0]);
+                        const y = trace_vals.map(pair => pair[1]);
+                        max_ts = Math.max(max_ts, Math.max(...x));
+                        layout.xaxis = {range: [max_ts-60, max_ts]};
+
+                        newDataByTrace[trace_name].x.push(...x);
+                        newDataByTrace[trace_name].y.push(...y);
+                    }
+                });
+
+                // Handle new and existing traces
+                if (!isInitialized) {
+                    // First run - create all traces
+                    const initialTraces = [];
+                    let traceIndex = 0;
+
+                    for (const [traceName, data] of Object.entries(newDataByTrace)) {
+                        const trace = {
+                            name: traceName,
+                            x: data.x,
+                            y: data.y,
+                            type: 'scatter',
+                            mode: 'lines'
+                        };
+
+                        tracesInfo[traceName] = {
+                            index: traceIndex,
+                            maxPoints: 1000 // Limit the number of points to improve performance
+                        };
+
+                        initialTraces.push(trace);
+                        traceIndex++;
+                    }
+
+                    if (initialTraces.length > 0) {
+                        Plotly.newPlot('chart', initialTraces, layout);
+                        isInitialized = true;
+                    }
+                } else {
+                    // Update existing traces and add new ones if needed
+                    const tracesToExtend = { x: [], y: [] };
+                    const traceIndices = [];
+                    const newTraces = [];
+
+                    for (const [traceName, data] of Object.entries(newDataByTrace)) {
+                        if (traceName in tracesInfo) {
+                            // Existing trace - prepare for extendTraces
+                            tracesToExtend.x.push(data.x);
+                            tracesToExtend.y.push(data.y);
+                            traceIndices.push(tracesInfo[traceName].index);
+                        } else {
+                            // New trace - prepare for addTraces
+                            const newTrace = {
+                                name: traceName,
+                                x: data.x,
+                                y: data.y,
+                                type: 'scatter',
+                                mode: 'lines'
+                            };
+
+                            newTraces.push(newTrace);
+                            tracesInfo[traceName] = {
+                                index: Object.keys(tracesInfo).length,
+                                maxPoints: 1000
+                            };
+                        }
+                    }
+
+                    // Apply updates
+                    if (traceIndices.length > 0) {
+                        Plotly.extendTraces('chart', tracesToExtend, traceIndices);
+                    }
+
+                    if (newTraces.length > 0) {
+                        Plotly.addTraces('chart', newTraces);
+                    }
+                    Plotly.relayout('chart', {
+                        'xaxis.range': [max_ts - 60, max_ts] // Keep the last `windowSize` values visible
+  });
                 }
+
             } catch (error) {
                 console.error('Error fetching data:', error);
             }
         }
 
         // Fetch data every second
-        setInterval(fetchData, 200);
+        setInterval(fetchData, 1000);
     </script>
 </body>
 </html>

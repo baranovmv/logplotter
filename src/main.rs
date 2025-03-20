@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::fs::metadata;
 use std::io::{Seek, SeekFrom};
@@ -18,7 +18,7 @@ use poem::{
     endpoint::StaticFilesEndpoint,
     Route, Server,
     middleware::Cors,
-    web::Json,
+    web::{Json, Query},
     EndpointExt
 };
 use rand::{SeedableRng, rngs::SmallRng, RngCore};
@@ -41,7 +41,9 @@ struct Args {
     config_file: std::path::PathBuf,
 }
 
-
+// Shared state across threads
+type SharedStreams = Arc<Mutex<VecDeque<ParsedBlock>>>;
+type ClientTracker = Arc<Mutex<HashMap<String, f64>>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,7 +53,7 @@ async fn main() -> Result<()> {
         return Err(anyhow!("{} is not a file", args.log_file.display()))
     }
     let recordstypes = Arc::new(load_config(&args.config_file)?);
-    let parser = LogParser::new(recordstypes.clone());
+    let mut parser = LogParser::new(recordstypes.clone());
 
     let ctrlc = Arc::new(AtomicBool::new(false));
     let ctrlc_for_signal = ctrlc.clone();
@@ -60,20 +62,25 @@ async fn main() -> Result<()> {
     })
     .expect("Error setting Ctrl-C handler");
 
-    let parsed_data_store = Arc::new(Mutex::<LogFields>::new(LogFields::new()));
-    let state = AppState {
-        result_list: parsed_data_store.clone(),
-        conf: recordstypes
-    };
+    let parsed_block_list = Arc::new(Mutex::new(VecDeque::<logrecord::ParsedBlock>::new()));
+    let state = parsed_block_list.clone();
+    let client_tracker = Arc::new(Mutex::new(HashMap::<String, f64>::new()));
     tokio::spawn(async move {
         let app = Route::new().nest(
         "/",
             StaticFilesEndpoint::new("./static/").index_file("index.html"),
         );
+        let cors = Cors::new()
+            .allow_origin("*")  // Allow all origins
+            .allow_methods(vec!["GET", "POST", "OPTIONS"])  // Ensure OPTIONS is handled
+            .allow_headers(vec!["Content-Type"])
+            .expose_headers(vec!["Access-Control-Allow-Origin"])  // ✅ Force the browser to see the CORS header
+            .allow_credentials(false)
+            .max_age(86400); // Cache preflight responses
         let app = Route::new()
-            .at("/data", get(get_data))
+            .at("/data", get(get_data.data(state).data(client_tracker)))
             .nest("/", StaticFilesEndpoint::new("static").index_file("index.html"))
-            .with(Cors::new());
+            .with(cors);
         Server::new(TcpListener::bind("0.0.0.0:3000"))
             .run(app)
             .await.unwrap()
@@ -112,6 +119,10 @@ async fn main() -> Result<()> {
         }
         let (parse_result, cur_parsed_line) = parser.parse(&lines);
         parsed_line_count.add_assign(u16::try_from(cur_parsed_line)?);
+        {
+            let mut parsed_blocks_list = parsed_block_list.lock().unwrap();
+            parsed_blocks_list.push_front(parse_result);
+        }
 
 
         line_count.add_assign(u16::try_from(lines.len())?);
@@ -167,46 +178,37 @@ fn parse_plots(plots_yml: &Yaml, conf: &mut LogRecordType) {
         conf.add_field(&name_s, axis, style);
     }
 }
-//
-// async fn serve_http(result_list: Arc<Mutex<LogFields<'_>>>, conf: Arc<LogRecordsConfig>) {
-//
-//     // GET /hello/from/warp
-//     let status = warp::path!("hello").map(
-//         move || {
-//             let rl = result_list.lock();
-//             if rl.unwrap().is_empty() {
-//                 "{}"
-//             } else {
-//                 "{[666]}"
-//             }
-//         });
-//
-//     let route = warp::get()
-//         .and(warp::fs::dir("static/").
-//             or(status)
-//         );
-//
-//     warp::serve(route)
-//         .run(([127, 0, 0, 1], 3030))
-//         .await;
-// }
-
-#[derive(Clone)]
-struct AppState {
-    result_list: Arc<Mutex<LogFields>>,
-    conf: Arc<LogRecordsConfig>
-}
-
-
-#[derive(Serialize)]
-struct Data {
-    values: Vec<u8>,
-}
 
 #[handler]
-async fn get_data() -> Json<Data> {
-    let mut rng = SmallRng::seed_from_u64(5711);
-    let mut values = vec![0u8; 100];
-    rng.fill_bytes(values.as_mut_slice());
-    Json(Data { values })
+async fn get_data(
+    parsed_block_list: poem::web::Data<&SharedStreams>,
+    client_tracker: poem::web::Data<&ClientTracker>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<Vec<ParsedBlock>> {
+    let client_id = params.get("client_id").unwrap_or(&"unknown".to_string()).clone();
+    let last_seen = {
+        let tracker = client_tracker.lock().unwrap();
+        *tracker.get(&client_id).unwrap_or(&0f64)
+    };
+
+    let streams = {
+        let parsedblocks = parsed_block_list.lock().unwrap();
+        println!("Available {}", parsedblocks.len());
+        let mut filtered_streams: Vec<ParsedBlock> = parsedblocks.iter().filter(|x| -> bool {
+            x.get_ts() > last_seen
+        }).map(|x| x.clone()).collect();
+        filtered_streams
+    };
+
+    // Update client's last seen ID
+    if let Some(max_id) = streams.iter().map(|s| s.get_ts()).reduce(f64::max) {
+        let mut tracker = client_tracker.lock().unwrap();
+        tracker.insert(client_id.clone(), max_id);
+    }
+    let min_ts = streams.iter().map(|s| s.get_ts()).reduce(f64::min).unwrap_or(f64::NAN);
+    let max_ts = streams.iter().map(|s| s.get_ts()).reduce(f64::max).unwrap_or(f64::NAN);
+
+    println!("Feeded {client_id} with {} blocks {min_ts}:{max_ts}\n", streams.len());;
+
+    Json( streams )
 }
