@@ -39,6 +39,9 @@ struct Args {
 
     #[arg(short='c', help = "Config file in yaml", value_hint = ValueHint::FilePath)]
     config_file: std::path::PathBuf,
+
+    #[arg(short='t', help = "Maximum length of stored history in seconds")]
+    max_hist_len: Option<f64>,
 }
 
 // Shared state across threads
@@ -53,6 +56,8 @@ async fn main() -> Result<()> {
         return Err(anyhow!("{} is not a file", args.log_file.display()))
     }
     let recordstypes = Arc::new(load_config(&args.config_file)?);
+    let recodsconfig = recordstypes.to_json()?;
+    let max_parsed_list_len = args.max_hist_len.unwrap_or(10f64);
     let mut parser = LogParser::new(recordstypes.clone());
 
     let ctrlc = Arc::new(AtomicBool::new(false));
@@ -79,6 +84,7 @@ async fn main() -> Result<()> {
             .max_age(86400); // Cache preflight responses
         let app = Route::new()
             .at("/data", get(get_data.data(state).data(client_tracker)))
+            .at("/config", get(get_config.data(recodsconfig)))
             .nest("/", StaticFilesEndpoint::new("static").index_file("index.html"))
             .with(cors);
         Server::new(TcpListener::bind("0.0.0.0:3000"))
@@ -122,8 +128,16 @@ async fn main() -> Result<()> {
         {
             let mut parsed_blocks_list = parsed_block_list.lock().unwrap();
             parsed_blocks_list.push_front(parse_result);
+            loop {
+                let hist_len = parsed_blocks_list.front().unwrap().get_ts()
+                    - parsed_blocks_list.back().unwrap().get_ts();
+                if hist_len > max_parsed_list_len {
+                    parsed_blocks_list.pop_back();
+                } else {
+                    break;
+                }
+            }
         }
-
 
         line_count.add_assign(u16::try_from(lines.len())?);
         if print_timer.once() {
@@ -187,28 +201,35 @@ async fn get_data(
 ) -> Json<Vec<ParsedBlock>> {
     let client_id = params.get("client_id").unwrap_or(&"unknown".to_string()).clone();
     let last_seen = {
-        let tracker = client_tracker.lock().unwrap();
-        *tracker.get(&client_id).unwrap_or(&0f64)
+        let mut tracker = client_tracker.lock().unwrap();
+        tracker.entry(client_id.clone()).or_insert(0f64).clone()
     };
 
     let streams = {
         let parsedblocks = parsed_block_list.lock().unwrap();
-        println!("Available {}", parsedblocks.len());
-        let mut filtered_streams: Vec<ParsedBlock> = parsedblocks.iter().filter(|x| -> bool {
-            x.get_ts() > last_seen
-        }).map(|x| x.clone()).collect();
+        // println!("Available {}", parsedblocks.len());
+        let mut filtered_streams: Vec<ParsedBlock> = parsedblocks.iter()
+                                            .filter(move |&x| x.get_ts() > last_seen)
+                                            .map(|x| x.clone()).collect();
         filtered_streams
     };
 
     // Update client's last seen ID
-    if let Some(max_id) = streams.iter().map(|s| s.get_ts()).reduce(f64::max) {
-        let mut tracker = client_tracker.lock().unwrap();
-        tracker.insert(client_id.clone(), max_id);
-    }
     let min_ts = streams.iter().map(|s| s.get_ts()).reduce(f64::min).unwrap_or(f64::NAN);
     let max_ts = streams.iter().map(|s| s.get_ts()).reduce(f64::max).unwrap_or(f64::NAN);
+    if !max_ts.is_nan() {
+        let mut tracker = client_tracker.lock().unwrap();
+        tracker.insert(client_id.clone(), max_ts.clone());
+    }
 
-    println!("Feeded {client_id} with {} blocks {min_ts}:{max_ts}\n", streams.len());;
+    // println!("Feeded {client_id} with {} blocks {min_ts}:{max_ts}\n", streams.len());;
 
     Json( streams )
+}
+
+#[handler]
+async fn get_config(config: poem::web::Data<&String>)
+    -> String
+{
+    config.clone()
 }

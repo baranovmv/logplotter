@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Real-Time Plotly Chart</title>
-    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+    <script src="./plotly-2.29.1.min.js"></script>
 </head>
 <body>
     <h1 align="center">LogPlotter</h1>
@@ -15,53 +15,85 @@
         const tracesInfo = {};
         let isInitialized = false;
 
-        // Track the maximum timestamp for relative time display
-        let maxTimestamp = 0;
-
-        // Initial layout with fixed x-axis range
-        const layout = {
-            title: 'Real-Time Data Plot',
-            xaxis: {
-                title: 'Time (relative seconds)',
-                range: [0, 60],  // Show last 60 seconds by default
-                autorange: false
-            },
-            yaxis: { title: 'Value' }
-        };
-
-        // Initialize with empty plot
-        Plotly.newPlot('chart', [], layout);
-
+        let config = {}
+        // For tracking axes
+        const axisMap = {};
         const clientId = `client_${Math.random().toString(36).substr(2, 9)}`;
 
-        // Function to convert absolute timestamps to relative (seconds from latest)
-        function getRelativeTime(timestamps, latestTime) {
-            // Convert nanoseconds to seconds and make relative to latest
-            return timestamps.map(t => (t - latestTime) / 1e9);
-        }
-        max_ts = 60;
+        async function fetchConfig() {
+            const response = await fetch('./config');
+            config_json = await response.json();
+            console.log('Loaded configuration:', config);
 
+            // Rework configuration to have direct trace_name access
+            const axisNumbers = new Set();
+
+            // Restructure config for easier access by trace name
+            for (const recordType of Object.values(config_json)) {
+                for (const [fieldName, field] of Object.entries(recordType.fields)) {
+                    // Store information by trace name for direct lookup
+                    config[fieldName] = {
+                        axis: field.axis,
+                        style: field.style,
+                        recordType: recordType.name
+                    };
+
+                    // Track unique axis numbers
+                    if (field.axis !== null) {
+                        axisNumbers.add(field.axis);
+                    }
+                }
+            }
+
+            // Setup layout with appropriate subplots
+            const uniqueAxes = Array.from(axisNumbers).sort();
+            const rowCount = uniqueAxes.length;
+
+            // Update layout for multiple axes
+            layout = {
+                title: 'Real-Time Log Data',
+                grid: { rows: rowCount, columns: 1, pattern: 'independent' },
+                // height: 150 * rowCount + 150,
+                // margin: { l: 60, r: 20, t: 50, b: 50 },
+                showlegend: true
+            };
+
+            // Add y-axes for each unique axis number
+            uniqueAxes.forEach((axisNum, index) => {
+                // Store mapping from config axis number to Plotly axis index
+                axisMap[axisNum] = index + 1;
+
+                // First axis is just 'yaxis', then 'yaxis2', 'yaxis3', etc.
+                const y_axisKey = index === 0 ? 'yaxis' : `yaxis${index + 1}`;
+                const x_axisKey = index === 0 ? 'xaxis' : `xaxis${index + 1}`;
+                layout[y_axisKey] = {
+                    title: `Axis ${axisNum}`,
+                };
+                layout[x_axisKey] = {
+                    title: 'Time (seconds)',
+                    range: [0, 60]
+                }
+            });
+
+            // Initialize with empty plot
+            Plotly.newPlot('chart', [], layout);
+
+            // Start data fetching after config is loaded
+            fetchData();
+            setInterval(fetchData, 100);
+        }
+
+        max_ts = 60;
         async function fetchData() {
             try {
-                const response = await fetch(`http://localhost:3000/data?client_id=${clientId}`);
+                const response = await fetch(`./data?client_id=${clientId}`);
                 const result = await response.json();
 
                 if (result.length === 0) return;
 
                 // Group all new data by trace
                 const newDataByTrace = {};
-                let localMaxTimestamp = maxTimestamp;
 
-                // First pass - find the maximum timestamp in this batch
-                result.forEach(parsed_block => {
-                    for (const [trace_name, trace_vals] of Object.entries(parsed_block.data)) {
-                        const xValues = trace_vals.map(pair => pair[0]);
-                        const batchMax = Math.max(...xValues);
-                        localMaxTimestamp = Math.max(localMaxTimestamp, batchMax);
-                    }
-                });
-
-                // Second pass - prepare data with relative timestamps
                 result.forEach(parsed_block => {
                     for (const [trace_name, trace_vals] of Object.entries(parsed_block.data)) {
                         if (!newDataByTrace[trace_name]) {
@@ -72,12 +104,21 @@
                         const x = trace_vals.map(pair => pair[0]);
                         const y = trace_vals.map(pair => pair[1]);
                         max_ts = Math.max(max_ts, Math.max(...x));
-                        layout.xaxis = {range: [max_ts-60, max_ts]};
 
                         newDataByTrace[trace_name].x.push(...x);
                         newDataByTrace[trace_name].y.push(...y);
                     }
                 });
+
+                // Update all x-axis ranges in sync
+                const axis_set = new Set(Object.values(axisMap));
+                var updateLayout = {};
+                for (const axis_num of axis_set) {
+                    var xaxis = axis_num > 1 ? `xaxis${axis_num}` : 'xaxis';
+                    xaxis = xaxis + '.range';
+                    updateLayout[xaxis] = [max_ts - 60, max_ts];
+                    // updateLayout[xaxis] = [max_ts - 60, max_ts];
+                }
 
                 // Handle new and existing traces
                 if (!isInitialized) {
@@ -86,17 +127,31 @@
                     let traceIndex = 0;
 
                     for (const [traceName, data] of Object.entries(newDataByTrace)) {
+                        // Get the axis directly from our simplified config
+                        let axisNum = 1; // Default to first axis
+
+                        if (config[traceName] && config[traceName].axis !== null) {
+                            axisNum = config[traceName].axis;
+                        }
+
+                        // Map config axis number to Plotly axis index
+                        const plotlyAxisNum = axisMap[axisNum] || 1;
+
                         const trace = {
                             name: traceName,
                             x: data.x,
                             y: data.y,
                             type: 'scatter',
-                            mode: 'lines'
+                            mode: 'lines',
+                            // For first axis, leave yaxis undefined (uses yaxis)
+                            // For other axes, specify yaxis2, yaxis3, etc.
+                            xaxis: plotlyAxisNum > 1 ? `x${plotlyAxisNum}` : 'x',
+                            yaxis: plotlyAxisNum > 1 ? `y${plotlyAxisNum}` : 'y'
                         };
 
                         tracesInfo[traceName] = {
                             index: traceIndex,
-                            maxPoints: 1000 // Limit the number of points to improve performance
+                            axisNum: axisNum
                         };
 
                         initialTraces.push(trace);
@@ -105,6 +160,10 @@
 
                     if (initialTraces.length > 0) {
                         Plotly.newPlot('chart', initialTraces, layout);
+                        // Plotly.update('chart', {}, { xaxis2: layout.xaxis2 }).then(() => {
+                        //     return Plotly.relayout('chart', updateLayout);
+                        // }).catch(error => console.error("Error in relayout:", error));
+                        Plotly.relayout('chart', updateLayout);
                         isInitialized = true;
                     }
                 } else {
@@ -120,19 +179,31 @@
                             tracesToExtend.y.push(data.y);
                             traceIndices.push(tracesInfo[traceName].index);
                         } else {
+                            // Get the axis directly from our simplified config
+                            let axisNum = 1; // Default to first axis
+
+                            if (config[traceName] && config[traceName].axis !== null) {
+                                axisNum = config[traceName].axis;
+                            }
+
+                            // Map config axis number to Plotly axis index
+                            const plotlyAxisNum = axisMap[axisNum] || 1;
+
                             // New trace - prepare for addTraces
                             const newTrace = {
                                 name: traceName,
                                 x: data.x,
                                 y: data.y,
                                 type: 'scatter',
-                                mode: 'lines'
+                                mode: 'lines',
+                                xaxis: plotlyAxisNum > 1 ? `x${plotlyAxisNum}` : 'x',
+                                yaxis: plotlyAxisNum > 1 ? `y${plotlyAxisNum}` : 'y'
                             };
 
                             newTraces.push(newTrace);
                             tracesInfo[traceName] = {
                                 index: Object.keys(tracesInfo).length,
-                                maxPoints: 1000
+                                axisNum: axisNum
                             };
                         }
                     }
@@ -141,13 +212,23 @@
                     if (traceIndices.length > 0) {
                         Plotly.extendTraces('chart', tracesToExtend, traceIndices);
                     }
-
                     if (newTraces.length > 0) {
                         Plotly.addTraces('chart', newTraces);
                     }
-                    Plotly.relayout('chart', {
-                        'xaxis.range': [max_ts - 60, max_ts] // Keep the last `windowSize` values visible
-  });
+
+                    // Plotly.update('chart', {}, { xaxis2: layout.xaxis2 }).then(() => {
+                    //     return Plotly.relayout('chart', updateLayout);
+                    // }).catch(error => console.error("Error in relayout:", error));
+                    Plotly.relayout('chart', updateLayout);
+
+                    // // Update all x-axis ranges in sync
+                    // const updateLayout = {};
+                    // for (let i = 1; i <= Object.keys(axisMap).length; i++) {
+                    //     const axisKey = i === 1 ? 'xaxis' : `xaxis${i}`;
+                    //     updateLayout[`${axisKey}.range`] = [max_ts - 60, max_ts];
+                    // }
+                    //
+                    // Plotly.relayout('chart', updateLayout);
                 }
 
             } catch (error) {
@@ -155,8 +236,7 @@
             }
         }
 
-        // Fetch data every second
-        setInterval(fetchData, 1000);
+        fetchConfig();
     </script>
 </body>
 </html>

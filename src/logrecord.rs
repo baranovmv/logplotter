@@ -1,11 +1,47 @@
 use std::collections::HashMap;
 use regex;
 use std::sync::Arc;
-use std::collections::LinkedList;
 use serde::Serialize;
+use serde_json;
 
 pub type LogRecordsConfig = HashMap<String, LogRecordType>;
 pub type FieldSample = (f64, f64);
+
+
+#[derive(Serialize)]
+struct LogRecordTypeJson {
+    name: String,
+    fields: HashMap<String, LogRecordField>
+}
+
+// Implement a method to convert LogRecordsConfig to JSON
+pub trait ToJson {
+    fn to_json(&self) -> anyhow::Result<String>;
+}
+
+impl ToJson for LogRecordsConfig {
+    fn to_json(&self) -> anyhow::Result<String> {
+        let mut json_map = HashMap::new();
+
+        for (key, record_type) in self.iter() {
+            // Create a version of LogRecordType without the regex
+            let json_record = LogRecordTypeJson {
+                name: record_type.name.clone(),
+                fields: record_type.fields.clone(),
+            };
+
+            json_map.insert(key.clone(), json_record);
+        }
+
+        // Serialize the map to JSON
+        let json_string = serde_json::to_string_pretty(&json_map)?;
+        Ok(json_string)
+    }
+}
+
+// Example usage:
+// let json = my_log_records_config.to_json()?;
+
 
 pub struct LogRecordType {
     name: String,
@@ -29,6 +65,7 @@ impl LogRecordType {
 }
 
 
+#[derive(Serialize, Clone)]
 struct LogRecordField {
     name: String,
     axis: Option<u8>,
@@ -83,6 +120,9 @@ impl LogParser {
                             let Ok(val) = cap[field_name.as_str()].parse() else { continue };
                             let ts_to_push = (ts.unwrap_or(0f64)
                                                    - self.ts_init.unwrap_or(0f64)) * 1e-9;
+                            if ts.is_none() {
+                                eprintln!("Error, ts is none for {}", field_name);
+                            }
                             if ts.is_some() {
                                 if res_ts.is_some() {
                                     res_ts = Some(res_ts.unwrap().max(ts_to_push));
@@ -133,26 +173,3 @@ impl ParsedBlock {
         &self.data
     }
 }
-
-// pub trait Append {
-//     fn append_result(&mut self, result: ParsedBlock, max_duration: Option<f64>);
-// }
-//
-// impl Append for LogFields<'_> {
-//     fn append_result(&mut self, result: ParsedBlock, max_duration: Option<f64>) {
-//         let new_ts = result.get_ts();
-//         if max_duration.is_some() && new_ts.is_some() {
-//             while !self.is_empty() {
-//                 let oldest = self.back().unwrap();
-//                 let Some(mut oldest_ts) = oldest.get_ts() else { break; };
-//                 let ts_delta = (new_ts.unwrap() - oldest_ts).abs();
-//                 if ts_delta > max_duration.unwrap() {
-//                     self.pop_back();
-//                 } else {
-//                     break;
-//                 }
-//             }
-//         }
-//         self.push_front(result);
-//     }
-// }
