@@ -189,7 +189,8 @@ fn parse_plots(plots_yml: &Yaml, conf: &mut LogRecordType) {
         let Some(name_s) = plot_name.as_str() else {continue};
         let axis = plot_conf["axis"].as_i64().and_then(|x| u8::try_from(x).ok());
         let style = plot_conf["style"].as_str();
-        conf.add_field(&name_s, axis, style);
+        let coef = plot_conf["coef"].as_f64();
+        conf.add_field(&name_s, axis, style, coef);
     }
 }
 

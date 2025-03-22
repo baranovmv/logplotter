@@ -1,10 +1,23 @@
 ---
- depacketizer:
-   regex: 'd,\s*(?P<ts>[\d.]*),\s*(?P<missing_samples>[\d.]*),\s*(?P<late_samples>[\d.]*),\s*(?P<recovered_samples>[\d.]*)'
-   plots:
-     late_samples:
-       axis: 1
-     missing_samples:
-       axis: 1
-     recovered_samples:
-       axis: 2
+depacketizer:
+  regex: 'd,\s*(?P<ts>[\d.]*),\s*(?P<missing_samples>[\d.]*),\s*(?P<late_samples>[\d.]*),\s*(?P<recovered_samples>[\d.]*)'
+  plots:
+    late_samples:
+      axis: 1
+    missing_samples:
+      axis: 1
+    recovered_samples:
+      axis: 2
+
+jitter:
+  regex: 'm,\s*(?P<ts>[\d.]*),\s*(?P<stream_ts>[\d.]*),\s*(?P<delta_ms>[\d.]*),\s*(?P<jitter_max>[\d.]*),\s*(?P<jitter_min>[\d.]*)'
+  plots:
+    delta_ms:
+      axis: 3
+    jitter_max:
+      axis: 3
+      coef: 0.000001
+    jitter_min:
+      axis: 3
+      coef: 0.000001
+

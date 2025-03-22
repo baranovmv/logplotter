@@ -58,9 +58,11 @@ impl LogRecordType {
         })
     }
 
-    pub fn add_field(&mut self, legend: &str, axis: Option<u8>, style: Option<&str>) {
+    pub fn add_field(&mut self, legend: &str, axis: Option<u8>, style: Option<&str>,
+                     coef: Option<f64>) {
         let field_name = legend.to_string();
-        self.fields.insert(legend.to_string().clone(), LogRecordField::new(field_name, axis, style));
+        self.fields.insert(legend.to_string().clone(), LogRecordField::new(field_name, axis, style,
+                                                                           coef));
     }
 }
 
@@ -70,14 +72,16 @@ struct LogRecordField {
     name: String,
     axis: Option<u8>,
     style: Option<String>,
+    coef: Option<f64>
 }
 
 impl LogRecordField {
-    fn new(name: String, axis: Option<u8>, style: Option<&str>) -> LogRecordField {
+    fn new(name: String, axis: Option<u8>, style: Option<&str>, coef: Option<f64>) -> LogRecordField {
         LogRecordField {
             name: name,
             axis,
-            style: style.and_then(|s| Some(s.to_string().clone()))
+            style: style.and_then(|s| Some(s.to_string().clone())),
+            coef
         }
     }
 }
@@ -117,7 +121,7 @@ impl LogParser {
                             = result.get_map_mut().get_mut(field_name) else { continue };
 
                         if field_name.as_str() != "ts" {
-                            let Ok(val) = cap[field_name.as_str()].parse() else { continue };
+                            let Ok(val): Result<f64, _> = cap[field_name.as_str()].parse() else { continue };
                             let ts_to_push = (ts.unwrap_or(0f64)
                                                    - self.ts_init.unwrap_or(0f64)) * 1e-9;
                             if ts.is_none() {
@@ -130,7 +134,7 @@ impl LogParser {
                                     res_ts = Some(ts_to_push);
                                 }
                             }
-                            vec.push((ts_to_push, val));
+                            vec.push((ts_to_push, val * field.coef.unwrap_or(1f64)));
                         }
                     }
                 }
