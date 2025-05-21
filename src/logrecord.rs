@@ -14,7 +14,7 @@ struct LogRecordTypeJson {
     fields: HashMap<String, LogRecordField>
 }
 
-// Implement a method to convert LogRecordsConfig to JSON
+// Converts LogRecordsConfig to JSON
 pub trait ToJson {
     fn to_json(&self) -> anyhow::Result<String>;
 }
@@ -24,7 +24,7 @@ impl ToJson for LogRecordsConfig {
         let mut json_map = HashMap::new();
 
         for (key, record_type) in self.iter() {
-            // Create a version of LogRecordType without the regex
+            // Creating a version of LogRecordType without the regex
             let json_record = LogRecordTypeJson {
                 name: record_type.name.clone(),
                 fields: record_type.fields.clone(),
@@ -33,14 +33,11 @@ impl ToJson for LogRecordsConfig {
             json_map.insert(key.clone(), json_record);
         }
 
-        // Serialize the map to JSON
+        // Serializing the map to JSON
         let json_string = serde_json::to_string_pretty(&json_map)?;
         Ok(json_string)
     }
 }
-
-// Example usage:
-// let json = my_log_records_config.to_json()?;
 
 
 pub struct LogRecordType {
@@ -97,33 +94,42 @@ impl LogParser {
         LogParser { records_conf: record_type, results_counter: 0, ts_init: None }
     }
 
-    pub fn parse(&mut self, lines: &Vec<String>) -> (ParsedBlock, usize) {
+    pub fn parse(&mut self, lines: &Vec<String>) -> Option<(ParsedBlock, usize)> {
         let mut count = 0;
         let mut result = ParsedBlock::new();
         let mut res_ts = Option::<f64>::None;
-        for rec in self.records_conf.values() {
-            for field in rec.fields.values() {
-                let field_name = &field.name;
-                result.get_map_mut().insert(field_name.clone(), Vec::<FieldSample>::new());
-            }
-        }
+        let mut parsed = false;
 
         for l in lines {
-            let mut parsed = false;
             for rec in self.records_conf.values() {
                 if let Some(cap) = rec.regex.captures(&l) {
+                    parsed = true;
                     count += 1;
-                    let ts: Option<f64> = cap["ts"].parse().ok();
+                    // Add fields to the result if there is none.
+                    for field in rec.fields.values() {
+                        let field_name = &field.name;
+                        let ref mut res_map = result.get_map_mut();
+                        if !res_map.contains_key(field_name) {
+                            res_map.insert(field_name.clone(), Vec::<FieldSample>::new());
+                        }
+                    }
+                    let ts: Option<f64> = if cap.name("ts").is_some() {
+                        cap.name("ts").unwrap().as_str().parse().ok()
+                    } else if cap.name("time_ts").is_some() {
+                        self.parse_time(&cap["time_ts"]).ok()
+                    } else {
+                        None
+                    };
                     if self.ts_init.is_none() { self.ts_init = ts; }
                     for (field_name, field) in rec.fields.iter() {
                         let field_name = &field.name;
                         let Some(ref mut vec)
                             = result.get_map_mut().get_mut(field_name) else { continue };
 
-                        if field_name.as_str() != "ts" {
+                        if field_name.as_str() != "ts" || field_name.as_str() != "time_ts" {
                             let Ok(val): Result<f64, _> = cap[field_name.as_str()].parse() else { continue };
                             let ts_to_push = (ts.unwrap_or(0f64)
-                                                   - self.ts_init.unwrap_or(0f64)) * 1e-9;
+                                                   - self.ts_init.unwrap_or(0f64));
                             if ts.is_none() {
                                 eprintln!("Error, ts is none for {}", field_name);
                             }
@@ -140,13 +146,36 @@ impl LogParser {
                 }
             }
         }
+        if !parsed {
+            return None
+        }
         if res_ts.is_some() {
             result.set_ts(res_ts.unwrap());
         } else {
             result.set_ts(self.results_counter as f64);
         }
         self.results_counter += 1;
-        (result, count)
+        Some((result, count))
+    }
+
+    // Convert string of format [+-]hr:mn:sec.0123456789 into sec related to 0.
+    fn parse_time(&self, s: &str) -> Result::<f64, ()> {
+        let negative = s.starts_with('-');
+        let trimmed = s.trim_start_matches(|c| c == '-' || c == '+');
+
+        let parts: Vec<&str> = trimmed.split(':').collect();
+        if parts.len() != 3 {
+            return Err(());
+        }
+
+        let hours: i32 = parts[0].parse().map_err(|_| ())?;
+        let minutes: i32 = parts[1].parse().map_err(|_| ())?;
+
+        let seconds: f64 = parts[2].parse().map_err(|_| ())?;
+
+        let total_sec: f64 = f64::from(hours) * 3600f64 + f64::from(minutes) * 60f64 + seconds;
+
+        Ok(if negative { -total_sec } else { total_sec })
     }
 }
 

@@ -42,6 +42,9 @@ struct Args {
 
     #[arg(short='t', help = "Maximum length of stored history in seconds")]
     max_hist_len: Option<f64>,
+
+    #[arg(short='s', help = "Static")]
+    stat: Option<bool>,
 }
 
 // Shared state across threads
@@ -76,10 +79,10 @@ async fn main() -> Result<()> {
             StaticFilesEndpoint::new("./static/").index_file("index.html"),
         );
         let cors = Cors::new()
-            .allow_origin("*")  // Allow all origins
-            .allow_methods(vec!["GET", "POST", "OPTIONS"])  // Ensure OPTIONS is handled
+            .allow_origin("*")
+            .allow_methods(vec!["GET", "POST", "OPTIONS"])
             .allow_headers(vec!["Content-Type"])
-            .expose_headers(vec!["Access-Control-Allow-Origin"])  // ✅ Force the browser to see the CORS header
+            .expose_headers(vec!["Access-Control-Allow-Origin"])
             .allow_credentials(false)
             .max_age(86400); // Cache preflight responses
         let app = Route::new()
@@ -92,13 +95,11 @@ async fn main() -> Result<()> {
             .await.unwrap()
     });
 
-     // tokio::spawn(serve_http(parsed_data_store.clone(), recordstypes));
-
     let mut log_file = File::open(&args.log_file)?;
-    let mut last_size = log_file.seek(SeekFrom::End(0))?;
+    let mut last_size = if args.stat.unwrap_or(false) { 0 } else { log_file.seek(SeekFrom::End(0))? };
     let mut remainder = String::new();
 
-    let mut line_count: u16 = 0;
+    let mut line_count: u32 = 0;
     let mut parsed_line_count: u16 = 0;
     let mut print_timer = Once::new(time::Duration::from_secs(PRINT_PERIOD.into()));
     loop {
@@ -123,10 +124,9 @@ async fn main() -> Result<()> {
             }
             continue;
         }
-        let (parse_result, cur_parsed_line) = parser.parse(&lines);
-        parsed_line_count.add_assign(u16::try_from(cur_parsed_line)?);
-        {
+        if let Some((parse_result, cur_parsed_line)) = parser.parse(&lines) {
             let mut parsed_blocks_list = parsed_block_list.lock().unwrap();
+            parsed_line_count.add_assign(u16::try_from(cur_parsed_line)?);
             parsed_blocks_list.push_front(parse_result);
             loop {
                 let hist_len = parsed_blocks_list.front().unwrap().get_ts()
@@ -137,18 +137,18 @@ async fn main() -> Result<()> {
                     break;
                 }
             }
-        }
+        } else { continue; }
 
-        line_count.add_assign(u16::try_from(lines.len())?);
+        line_count.add_assign(u32::try_from(lines.len())?);
         if print_timer.once() {
-            let lines_per_sec = f32::try_from(line_count)? / f32::from(PRINT_PERIOD);
+            let lines_per_sec = f64::try_from(line_count)? / f64::from(PRINT_PERIOD);
             let parsed_per_sec = f32::try_from(parsed_line_count)? / f32::from(PRINT_PERIOD);
             parsed_line_count = 0;
             print!("{lines_per_sec:.1} lines per second\t{parsed_per_sec}\n");
 
             // line_count -= round(lines_per_sec * PRINT_PERIOD)
             line_count = line_count.saturating_sub(
-                f32::round(lines_per_sec * f32::from(PRINT_PERIOD)) as u16
+                f64::round(lines_per_sec * f64::from(PRINT_PERIOD)) as u32
             );
         }
     }
@@ -211,7 +211,7 @@ async fn get_data(
         // println!("Available {}", parsedblocks.len());
         let mut filtered_streams: Vec<ParsedBlock> = parsedblocks.iter()
                                             .filter(move |&x| x.get_ts() > last_seen)
-                                            .map(|x| x.clone()).collect();
+                                            .map(|x| x.clone()).rev().collect();
         filtered_streams
     };
 
