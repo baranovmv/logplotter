@@ -6,11 +6,11 @@ use anyhow;
 /// Keeps track of intermediate hanging "remainder" line.
 /// TODO: make use of fnotify if available.
 pub trait LineReader {
-    fn incremental_read_line(&mut self, remainder: &mut String) -> anyhow::Result<Vec<String>>;
+    fn incremental_read_line(&mut self, remainder: &mut Vec::<u8>) -> anyhow::Result<Vec<String>>;
 }
 
 impl LineReader for File {
-    fn incremental_read_line(&mut self, remainder: &mut String) -> anyhow::Result<Vec<String>> {
+    fn incremental_read_line(&mut self, remainder: &mut Vec::<u8>) -> anyhow::Result<Vec<String>> {
         let mut buffer = [0u8; 1024 * 10];
         let buff_n = self.read(&mut buffer)?;
 
@@ -18,19 +18,16 @@ impl LineReader for File {
             return Ok(vec![]);
         }
 
-        let buff_str = std::str::from_utf8(&buffer[..buff_n])?;
-        let mut content = String::new();
-        content.push_str(remainder);
-        content.push_str(buff_str);
+        remainder.extend_from_slice(&buffer[..buff_n]);
+        let mut content = String::from_utf8_lossy(&remainder).into_owned();
         let lines = content.split_inclusive('\n');
         let mut result: Vec<String> = lines.map( |s| s.to_string()).collect();
 
+        remainder.clear();
         if !content.ends_with('\n') {
             if let Some(last) = result.pop() {
-                *remainder = last;
+                let _ = std::mem::replace(remainder, last.into_bytes());
             }
-        } else {
-            remainder.clear();
         }
 
         Ok(result)

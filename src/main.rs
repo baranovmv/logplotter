@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
 
     let mut log_file = File::open(&args.log_file)?;
     let mut last_size = if args.stat.unwrap_or(false) { 0 } else { log_file.seek(SeekFrom::End(0))? };
-    let mut remainder = String::new();
+    let mut remainder = Vec::new();
 
     let mut line_count: u32 = 0;
     let mut parsed_line_count: u16 = 0;
