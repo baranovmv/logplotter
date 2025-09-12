@@ -14,3 +14,4 @@ poem = { version = "3.1.7", features = ["static-files"] }
 serde = { version = "1.0.218", features = ["derive"] }
 rand = { version = "0", features = ["small_rng"] }
 serde_json = {version = "1"}
+indicatif = "0"
