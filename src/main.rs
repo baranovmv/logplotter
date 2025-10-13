@@ -7,16 +7,16 @@ use std::fs::metadata;
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::net::SocketAddr;
-use std::ops::{Add, AddAssign};
+use std::ops::{AddAssign};
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 use std::time;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use poem::{
     endpoint::StaticFilesEndpoint,
     get, handler,
-    listener::{Listener, TcpListener},
+    listener::{TcpListener},
     middleware::Cors,
     web::{Json, Query},
     EndpointExt, Route, Server,
@@ -42,6 +42,12 @@ struct Args {
 
     #[arg(short = 's', help = "Static")]
     stat: Option<bool>,
+
+    #[arg(short = 'p', help = "Port number")]
+    port: Option<u16>,
+
+    #[arg(short = 'n', help = "Title of the plot")]
+    title: Option<String>,
 }
 
 // Shared state across threads
@@ -55,7 +61,7 @@ async fn main() -> Result<()> {
     if !args.log_file.is_file() {
         return Err(anyhow!("{} is not a file", args.log_file.display()));
     }
-    let recordstypes = Arc::new(load_config(&args.config_file)?);
+    let recordstypes = Arc::new(load_config(&args.config_file, args.title.clone())?);
     let recodsconfig = recordstypes.to_json()?;
     let max_parsed_list_len = args.max_hist_len.unwrap_or(10f64);
     let mut parser = LogParser::new(recordstypes.clone());
@@ -86,7 +92,8 @@ async fn main() -> Result<()> {
                 StaticFilesEndpoint::new("static").index_file("index.html"),
             )
             .with(cors);
-        Server::new(TcpListener::bind("0.0.0.0:3000"))
+        let bind_addr = SocketAddr::from(([127, 0, 0, 1], args.port.unwrap_or(3000)));
+        Server::new(TcpListener::bind(bind_addr))
             .run(app)
             .await
             .unwrap()
@@ -127,7 +134,6 @@ async fn main() -> Result<()> {
                 if new_size < last_size {
                     eprintln!("File truncated. Resetting reader...");
                     log_file = File::open(&args.log_file)?;
-                    last_size = 0;
                 }
 
                 last_size = new_size;
@@ -180,16 +186,21 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_config(file_path: &std::path::PathBuf) -> anyhow::Result<LogRecordsConfig> {
+fn load_config(file_path: &std::path::PathBuf, title: Option<String>) -> anyhow::Result<LogRecordsConfig> {
     if !file_path.is_file() {
         return Err(anyhow!("{} is not a file", file_path.display()));
     }
-
+    let title = title.unwrap_or(file_path
+        .file_name()
+        .and_then(|os_str| os_str.to_str())
+        .unwrap_or("no_filename")
+        .to_string() // Convert the resulting &str to String
+    );
     let content = std::fs::read_to_string(file_path)?;
     let docs = YamlLoader::load_from_str(&content)
         .or_else(|e| Err(anyhow!("Error parsing YAML file: {}", e.info())))?;
 
-    let mut recordstypes = LogRecordsConfig::new();
+    let mut recordstypes = LogRecordsConfig::new(title);
     for doc in docs {
         if let Some(hash) = doc.as_hash() {
             for (name, record_settings) in hash.iter() {
@@ -201,7 +212,7 @@ fn load_config(file_path: &std::path::PathBuf) -> anyhow::Result<LogRecordsConfi
                 };
                 let mut record_type = LogRecordType::new(name_s, regex)?;
                 parse_plots(&record_settings["plots"], &mut record_type);
-                recordstypes.insert(name_s.to_string(), record_type);
+                recordstypes.records.insert(name_s.to_string(), record_type);
             }
         }
     }
@@ -258,7 +269,7 @@ async fn get_data(
     };
 
     // Update client's last seen ID
-    let min_ts = streams
+    let _min_ts = streams
         .iter()
         .map(|s| s.get_ts())
         .reduce(f64::min)

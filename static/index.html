@@ -7,7 +7,7 @@
     <script src="./plotly-2.29.1.min.js"></script>
 </head>
 <body>
-    <h1 align="center">LogPlotter</h1>
+    <h1 id="pageTitle" align="center">LogPlotter</h1>
     <div id="chart" style="width: 80%; margin: auto; height: 800px;"></div>
 
     <script>
@@ -25,11 +25,19 @@
             config_json = await response.json();
             console.log('Loaded configuration:', config);
 
+            if (config_json.title) {
+                document.title = config_json.title;
+                const pageTitleEl = document.getElementById('pageTitle');
+                if (pageTitleEl) {
+                    pageTitleEl.textContent = config_json.title;
+                }
+            }
+
             // Rework configuration to have direct trace_name access
             const axisNumbers = new Set();
 
             // Restructure config for easier access by trace name
-            for (const recordType of Object.values(config_json)) {
+            for (const recordType of Object.values(config_json.fields)) {
                 for (const [fieldName, field] of Object.entries(recordType.fields)) {
                     // Store information by trace name for direct lookup
                     config[fieldName] = {

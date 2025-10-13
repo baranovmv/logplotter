@@ -4,9 +4,19 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json;
 
-pub type LogRecordsConfig = HashMap<String, LogRecordType>;
 pub type FieldSample = (f64, f64);
 
+pub struct LogRecordsConfig {
+    pub(crate) records: HashMap<String, LogRecordType>,
+    pub title: String
+}
+
+impl LogRecordsConfig {
+    pub fn new(title: String) -> LogRecordsConfig {
+        let records = HashMap::new();
+        LogRecordsConfig{title, records}
+    }
+}
 
 #[derive(Serialize)]
 struct LogRecordTypeJson {
@@ -23,7 +33,7 @@ impl ToJson for LogRecordsConfig {
     fn to_json(&self) -> anyhow::Result<String> {
         let mut json_map = HashMap::new();
 
-        for (key, record_type) in self.iter() {
+        for (key, record_type) in self.records.iter() {
             // Creating a version of LogRecordType without the regex
             let json_record = LogRecordTypeJson {
                 name: record_type.name.clone(),
@@ -32,10 +42,15 @@ impl ToJson for LogRecordsConfig {
 
             json_map.insert(key.clone(), json_record);
         }
+        // json_map.insert(String::from("title"), self.title.clone());
+        let json = serde_json::json!({
+            "title": self.title,
+            "fields": json_map,
+        });
 
         // Serializing the map to JSON
-        let json_string = serde_json::to_string_pretty(&json_map)?;
-        Ok(json_string)
+        // let json_string = serde_json::to_string_pretty(&json_map)?;
+        Ok(json.to_string())
     }
 }
 
@@ -103,7 +118,7 @@ impl LogParser {
         let mut parsed = false;
 
         for l in lines {
-            for rec in self.records_conf.values() {
+            for rec in self.records_conf.records.values() {
                 if let Some(cap) = rec.regex.captures(&l) {
                     parsed = true;
                     count += 1;
@@ -123,7 +138,7 @@ impl LogParser {
                         None
                     };
                     if self.ts_init.is_none() { self.ts_init = ts; }
-                    for (field_name, field) in rec.fields.iter() {
+                    for (_field_name, field) in rec.fields.iter() {
                         let field_name = &field.name;
                         let Some(ref mut vec)
                             = result.get_map_mut().get_mut(field_name) else { continue };
@@ -218,9 +233,5 @@ impl ParsedBlock {
 
     pub fn get_map_mut(&mut self) -> &mut HashMap<String, Vec<FieldSample>> {
         &mut self.data
-    }
-
-    pub fn get_map(&self) -> &HashMap<String, Vec<FieldSample>> {
-        &self.data
     }
 }

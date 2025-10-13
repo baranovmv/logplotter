@@ -19,7 +19,7 @@ impl LineReader for File {
         }
 
         remainder.extend_from_slice(&buffer[..buff_n]);
-        let mut content = String::from_utf8_lossy(&remainder).into_owned();
+        let content = String::from_utf8_lossy(&remainder).into_owned();
         let lines = content.split_inclusive('\n');
         let mut result: Vec<String> = lines.map( |s| s.to_string()).collect();
 
