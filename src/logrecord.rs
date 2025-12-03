@@ -173,7 +173,7 @@ impl LogParser {
                                     val = val.clamp(ylim[0], ylim[1]);
                                 }
                             }
-                            vec.push((ts_to_push, val * field.coef.unwrap_or(1f64)));
+                            vec.push((ts_to_push, val));
                         }
                     }
                 }
