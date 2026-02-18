@@ -1,6 +1,6 @@
 ---
 depacketizer:
-  regex: 'd,\s*(?P<ts>[\d.]*),\s*(?P<missing_samples>[\d.]*),\s*(?P<late_samples>[\d.]*),\s*(?P<recovered_samples>[\d.]*)'
+  regex: 'd,\s*(?P<ts>[-\d.]*),\s*(?P<missing_samples>[-\d.]*),\s*(?P<late_samples>[-\d.]*),\s*(?P<recovered_samples>[-\d.]*)'
   plots:
     late_samples:
       axis: 1
@@ -10,14 +10,48 @@ depacketizer:
       axis: 2
 
 jitter:
-  regex: 'm,\s*(?P<ts>[\d.]*),\s*(?P<stream_ts>[\d.]*),\s*(?P<delta_ms>[\d.]*),\s*(?P<jitter_max>[\d.]*),\s*(?P<jitter_min>[\d.]*)'
+  regex: 'm,\s*(?P<ts>[-\d.]*),\s*(?P<stream_ts>[-\d.]*),\s*(?P<curr_jitter>[-\d.]*),\s*(?P<peak_jitter>[-\d.]*),\s*(?P<envelope>[-\d.]*)'
   plots:
-    delta_ms:
+    curr_jitter:
       axis: 3
-    jitter_max:
+      coef: 0.000001 # ns to ms
+    peak_jitter:
       axis: 3
-      coef: 0.000001
-    jitter_min:
+      coef: 0.000001 # ns to ms
+    envelope:
       axis: 3
-      coef: 0.000001
+      coef: 0.000001 # ns to ms
 
+rtt:
+  regex: 'r,\s*(?P<ts>[-\d.]*),\s*(?P<rtt_ns>[-\d.]*),\s*(?P<clock_offset_ns>[-\d.]*),\s*(?P<_1>[-\d.]*),\s*(?P<_2>[-\d.]*),\s*(?P<_3>[-\d.]*),\s*(?P<_4>[-\d.]*)'
+  plots:
+    rtt_ns:
+      axis: 4
+      coef: 0.000001 # ns to ms
+    clock_offset_ns:
+      axis: 4
+      coef: 0.000001 # ns to ms
+
+latency:
+  regex: 'f,\s*(?P<ts>[-\d.]*),\s*(?P<cur_latency_spls>[-\d.]*),\s*(?P<target_latency_spls>[-\d.]*),\s*(?P<p>[-\d.]*),\s*(?P<i>[-\d.]*)'
+  plots:
+    cur_latency_spls:
+      axis: 5
+    target_latency_spls:
+      axis: 5
+
+latency_tuner:
+  regex: 't,\s*(?P<ts>[-\d.]*),\s*(?P<niq>[-\d.]*),\s*(?P<target_latency_tuner>[-\d.]*),\s*(?P<e2e>[-\d.]*)'
+  plots:
+    niq:
+      axis: 6
+    e2e:
+      axis: 6
+    target_latency_tuner:
+      axis: 6
+
+sender_callback:
+  regex: 'z,\s*(?P<ts>[-\d.]*),\s*(?P<send_ts>[-\d.]*)'
+  plots:
+    send_ts:
+      axis: 3

@@ -1,27 +1,27 @@
-use std::collections::HashMap;
 use regex;
-use std::sync::Arc;
 use serde::Serialize;
 use serde_json;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub type FieldSample = (f64, f64);
 
 pub struct LogRecordsConfig {
     pub(crate) records: HashMap<String, LogRecordType>,
-    pub title: String
+    pub title: String,
 }
 
 impl LogRecordsConfig {
     pub fn new(title: String) -> LogRecordsConfig {
         let records = HashMap::new();
-        LogRecordsConfig{title, records}
+        LogRecordsConfig { title, records }
     }
 }
 
 #[derive(Serialize)]
 struct LogRecordTypeJson {
     name: String,
-    fields: HashMap<String, LogRecordField>
+    fields: HashMap<String, LogRecordField>,
 }
 
 // Converts LogRecordsConfig to JSON
@@ -54,11 +54,10 @@ impl ToJson for LogRecordsConfig {
     }
 }
 
-
 pub struct LogRecordType {
     name: String,
     regex: regex::Regex,
-    fields: HashMap<String, LogRecordField>
+    fields: HashMap<String, LogRecordField>,
 }
 
 impl LogRecordType {
@@ -70,14 +69,21 @@ impl LogRecordType {
         })
     }
 
-    pub fn add_field(&mut self, legend: &str, axis: Option<u8>, style: Option<&str>,
-                     coef: Option<f64>, ylim: Option::<Vec<f64>>) {
+    pub fn add_field(
+        &mut self,
+        legend: &str,
+        axis: Option<u8>,
+        style: Option<&str>,
+        coef: Option<f64>,
+        ylim: Option<Vec<f64>>,
+    ) {
         let field_name = legend.to_string();
-        self.fields.insert(legend.to_string().clone(), LogRecordField::new(field_name, axis, style,
-                                                                           coef, ylim));
+        self.fields.insert(
+            legend.to_string().clone(),
+            LogRecordField::new(field_name, axis, style, coef, ylim),
+        );
     }
 }
-
 
 #[derive(Serialize, Clone)]
 struct LogRecordField {
@@ -85,11 +91,17 @@ struct LogRecordField {
     axis: Option<u8>,
     style: Option<String>,
     coef: Option<f64>,
-    ylim: Option<Vec<f64>>
+    ylim: Option<Vec<f64>>,
 }
 
 impl LogRecordField {
-    fn new(name: String, axis: Option<u8>, style: Option<&str>, coef: Option<f64>, ylim: Option<Vec<f64>>) -> LogRecordField {
+    fn new(
+        name: String,
+        axis: Option<u8>,
+        style: Option<&str>,
+        coef: Option<f64>,
+        ylim: Option<Vec<f64>>,
+    ) -> LogRecordField {
         LogRecordField {
             name,
             axis,
@@ -108,7 +120,11 @@ pub struct LogParser {
 
 impl LogParser {
     pub fn new(record_type: Arc<LogRecordsConfig>) -> LogParser {
-        LogParser { records_conf: record_type, results_counter: 0, ts_init: None }
+        LogParser {
+            records_conf: record_type,
+            results_counter: 0,
+            ts_init: None,
+        }
     }
 
     pub fn parse(&mut self, lines: &Vec<String>) -> Option<(ParsedBlock, usize)> {
@@ -131,17 +147,20 @@ impl LogParser {
                         }
                     }
                     let ts: Option<f64> = if cap.name("ts").is_some() {
-                        cap.name("ts").unwrap().as_str().parse().ok()
+                        cap.name("ts").unwrap().as_str().parse().ok().and_then(|x: f64| Some(x * 1e-9))
                     } else if cap.name("time_ts").is_some() {
                         self.parse_time(&cap["time_ts"]).ok()
                     } else {
                         None
                     };
-                    if self.ts_init.is_none() { self.ts_init = ts; }
+                    if self.ts_init.is_none() {
+                        self.ts_init = ts;
+                    }
                     for (_field_name, field) in rec.fields.iter() {
                         let field_name = &field.name;
-                        let Some(ref mut vec)
-                            = result.get_map_mut().get_mut(field_name) else { continue };
+                        let Some(ref mut vec) = result.get_map_mut().get_mut(field_name) else {
+                            continue;
+                        };
 
                         if field_name.as_str() != "ts" || field_name.as_str() != "time_ts" {
                             let val_str = &cap[field_name.as_str()];
@@ -151,12 +170,11 @@ impl LogParser {
                             } else {
                                 if let Ok(val_time) = self.parse_time(val_str) {
                                     val = val_time;
-                                }  else {
+                                } else {
                                     continue;
                                 };
                             }
-                            let ts_to_push = ts.unwrap_or(0f64)
-                                                   - self.ts_init.unwrap_or(0f64);
+                            let ts_to_push = ts.unwrap_or(0f64) - self.ts_init.unwrap_or(0f64);
                             if ts.is_none() {
                                 eprintln!("Error, ts is none for {}", field_name);
                             }
@@ -180,7 +198,7 @@ impl LogParser {
             }
         }
         if !parsed {
-            return None
+            return None;
         }
         if res_ts.is_some() {
             result.set_ts(res_ts.unwrap());
@@ -192,7 +210,7 @@ impl LogParser {
     }
 
     // Convert string of format [+-]hr:mn:sec.0123456789 into sec related to 0.
-    fn parse_time(&self, s: &str) -> Result::<f64, ()> {
+    fn parse_time(&self, s: &str) -> Result<f64, ()> {
         let negative = s.starts_with('-');
         let trimmed = s.trim_start_matches(|c| c == '-' || c == '+');
 
@@ -215,12 +233,15 @@ impl LogParser {
 #[derive(Serialize, Clone)]
 pub struct ParsedBlock {
     data: HashMap<String, Vec<FieldSample>>,
-    ts: f64
+    ts: f64,
 }
 
 impl ParsedBlock {
     pub fn new() -> ParsedBlock {
-        ParsedBlock {data: HashMap::new(), ts: 0f64}
+        ParsedBlock {
+            data: HashMap::new(),
+            ts: 0f64,
+        }
     }
 
     pub fn set_ts(&mut self, ts: f64) {
